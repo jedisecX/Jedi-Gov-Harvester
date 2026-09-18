@@ -1,0 +1,22 @@
+[project]
+name = "jedi-gov-harvester"
+version = "1.0.0"
+description = "Resumable U.S. state government PDF harvester"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pyyaml>=6.0",
+  "requests>=2.31.0",
+  "beautifulsoup4>=4.12.0",
+  "lxml>=5.0.0",
+  "click>=8.1.0",
+  "urllib3>=2.0.0",
+  "python-dateutil>=2.8.0",
+]
+
+[project.scripts]
+jedi-gov-harvester = "harvester.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
