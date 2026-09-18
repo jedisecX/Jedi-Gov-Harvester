@@ -38,6 +38,13 @@ network:
     - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 GovernmentPDFHarvester/1.0"
     - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 GovernmentPDFHarvester/1.0"
   timeout: 30
+  # Optional. socks5h resolves DNS through the proxy. Examples:
+  # proxy: "socks5h://127.0.0.1:9050"
+  # proxy:
+  #   scheme: socks5h
+  #   host: 127.0.0.1
+  #   port: 9050
+  proxy: null
 
 allowed_domains:
   - "*.gov"

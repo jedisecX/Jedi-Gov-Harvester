@@ -33,6 +33,7 @@ def _session(cfg):
         cfg.user_agent,
         rotate=bool(cfg.get("network.rotate_headers", True)),
         user_agents=list(agents) if agents else None,
+        proxy=cfg.get("network.proxy") or cfg.get("network.socks"),
     )
 
 def _limiter(cfg):

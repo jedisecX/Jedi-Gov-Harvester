@@ -5,6 +5,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from harvester.headers import HeaderRotator
+from harvester.proxy import proxy_map
 
 
 class RotatingSession(requests.Session):
@@ -21,13 +22,22 @@ class RotatingSession(requests.Session):
         return prepared
 
 
-def build_session(user_agent: str, *, rotate: bool = True, user_agents: list[str] | None = None) -> requests.Session:
+def build_session(
+    user_agent: str,
+    *,
+    rotate: bool = True,
+    user_agents: list[str] | None = None,
+    proxy: str | dict | None = None,
+) -> requests.Session:
     agents = list(user_agents or [])
     if user_agent and user_agent not in agents:
         agents = [user_agent, *agents]
     rotator = HeaderRotator(agents or None, enabled=rotate)
     session = RotatingSession(rotator)
     session.headers.update(rotator.next())
+    proxies = proxy_map(proxy)
+    if proxies:
+        session.proxies.update(proxies)
     retry = Retry(
         total=2,
         backoff_factor=0.5,
