@@ -17,30 +17,20 @@ SQLite is the source of truth. The filesystem stores downloaded PDFs. CSV/JSON a
                  │ Search Provider    │  (yahoo, replaceable)
                  └────────┬─────────┘
                           │
-                 ┌────────▼─────────┐
-                 │ Result Normalizer │
-                 └────────┬─────────┘
-                          │
               ┌──────────▼───────────┐
               │ Persistent Search DB  │
               └──────────┬───────────┘
                           │
                  ┌────────▼─────────┐
-                 │ Government URL     │
-                 │ PDF Discovery      │
+                 │ Government URL/PDF │
                  └────────────────────┘
 ```
 
-Search does **not** try to evade Yahoo anti-bot. It:
+Search does **not** try to evade Yahoo anti-bot. It requests one page, persists state, caches results, honors 429/403/503 + Retry-After, then stops if Yahoo refuses automated access.
 
-- requests exactly one results page
-- persists query/page state in SQLite
-- caches seen results
-- honors 429 / 403 / 503 and `Retry-After`
-- exponential backoff, then stops (`blocked`) if Yahoo refuses automated access
-- is provider-replaceable via `search.provider` in `config.yaml`
+HTTP layer rotates `User-Agent` / `Accept` / `Accept-Language` on every request. Every UA still identifies as `GovernmentPDFHarvester`. Explicit headers such as `Range` are never overwritten.
 
-If page 1 succeeds and page 2 rate-limits, page 1 stays `completed` and page 2 waits.
+CLI commands show tqdm bars for discover, crawl, download, and verify.
 
 ## Install
 
@@ -65,15 +55,9 @@ python harvester.py verify
 
 Downloads write `*.part` files, send HTTP Range requests when possible, hash with SHA-256, and never overwrite a different existing file.
 
-## Seeds
-
-`seeds/agencies.json` covers all 50 states: official portals, governors, secretaries of state, legislatures, plus documented agency homepages.
-
-Do not invent agency URLs. Add verified official URLs only.
-
 ## Config
 
-See `config.yaml`.
+See `config.yaml`. Set `network.rotate_headers: false` to pin a single UA.
 
 ## Tests
 

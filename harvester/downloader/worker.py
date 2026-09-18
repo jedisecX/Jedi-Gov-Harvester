@@ -3,20 +3,21 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 from harvester.crawler.canonicalize import domain_of
 from harvester.database import Database, utcnow
 from harvester.downloader.hashing import content_addressed_path, sha256_file
 from harvester.downloader.resume import atomic_replace, existing_size
-from harvester.pdf.detector import magic_is_pdf
 from harvester.pdf.metadata import collision_name, filename_from_url
 from harvester.rate_limit import DomainLimiter, backoff_seconds
 
 log = logging.getLogger("download")
+ProgressFn = Callable[[int], None]
 
 
 class DownloadWorker:
-    def __init__(self, db: Database, session, limiter: DomainLimiter, storage_root: Path, storage_temp: Path, *, timeout: int = 60, retries: int = 5, chunk_size: int = 1048576, layout: str = "content_addressed", worker_id: str = "dl-1"):
+    def __init__(self, db: Database, session, limiter: DomainLimiter, storage_root: Path, storage_temp: Path, *, timeout: int = 60, retries: int = 5, chunk_size: int = 1048576, layout: str = "content_addressed", worker_id: str = "dl-1", on_progress: ProgressFn | None = None):
         self.db = db
         self.session = session
         self.limiter = limiter
@@ -27,6 +28,7 @@ class DownloadWorker:
         self.chunk_size = chunk_size
         self.layout = layout
         self.worker_id = worker_id
+        self.on_progress = on_progress
         self.root.mkdir(parents=True, exist_ok=True)
         self.temp.mkdir(parents=True, exist_ok=True)
 
@@ -76,6 +78,8 @@ class DownloadWorker:
                 (str(dest), digest, length, etag, last_mod, status, job["id"]),
             )
             self.db.execute("UPDATE download_queue SET status='completed', worker_id=NULL, locked_until=NULL WHERE document_id=?", (job["id"],))
+            if self.on_progress:
+                self.on_progress(1)
             return True
         except Exception as exc:
             log.info("download error %s %s", url, exc)
@@ -88,6 +92,8 @@ class DownloadWorker:
                 nxt = (datetime.now(timezone.utc) + timedelta(seconds=wait)).isoformat()
                 self.db.execute("UPDATE documents SET download_status='queued', error=? WHERE id=?", (str(exc)[:500], job["id"]))
                 self.db.execute("UPDATE download_queue SET status='queued', next_attempt=?, worker_id=NULL, locked_until=NULL WHERE document_id=?", (nxt, job["id"]))
+            if self.on_progress:
+                self.on_progress(1)
             return True
 
     def _download(self, url: str, job: dict, domain: str):

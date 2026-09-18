@@ -28,7 +28,12 @@ def _policy(cfg, db):
     return DomainPolicy(cfg.allowed_domains, cfg.denied_domains, extras)
 
 def _session(cfg):
-    return build_session(cfg.user_agent)
+    agents = cfg.get("network.user_agents") or []
+    return build_session(
+        cfg.user_agent,
+        rotate=bool(cfg.get("network.rotate_headers", True)),
+        user_agents=list(agents) if agents else None,
+    )
 
 def _limiter(cfg):
     return DomainLimiter(rps=float(cfg.get("rate_limit.requests_per_second", 2)), concurrent=int(cfg.get("rate_limit.concurrent_per_domain", 2)))
@@ -133,18 +138,22 @@ def status(ctx):
 @click.pass_context
 def verify(ctx):
     from harvester.downloader.hashing import sha256_file
+    from harvester.progress import progress
     _, db = _boot(ctx)
+    rows = db.fetchall("SELECT id, download_path, sha256 FROM documents WHERE download_status='complete'")
     ok = bad = missing = 0
-    for row in db.fetchall("SELECT id, download_path, sha256 FROM documents WHERE download_status='complete'"):
-        path = Path(row["download_path"] or "")
-        if not path.exists():
-            missing += 1
-            continue
-        digest = sha256_file(path)
-        if row["sha256"] and digest != row["sha256"]:
-            bad += 1
-        else:
-            ok += 1
+    with progress(total=len(rows) or None, desc="verify", unit="file") as bar:
+        for row in rows:
+            path = Path(row["download_path"] or "")
+            if not path.exists():
+                missing += 1
+            else:
+                digest = sha256_file(path)
+                if row["sha256"] and digest != row["sha256"]:
+                    bad += 1
+                else:
+                    ok += 1
+            bar.update(1)
     click.echo(f"verify ok={ok} mismatch={bad} missing={missing}")
 
 if __name__ == "__main__":

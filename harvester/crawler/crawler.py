@@ -10,6 +10,7 @@ from harvester.database import Database, utcnow
 from harvester.domain_policy import DomainPolicy
 from harvester.pdf.detector import classify_content_type, is_pdf, url_looks_like_pdf
 from harvester.pdf.indexer import PdfIndexer
+from harvester.progress import progress
 from harvester.rate_limit import DomainLimiter, backoff_seconds
 
 log = logging.getLogger("crawl")
@@ -53,6 +54,10 @@ class Crawler:
     def release_expired_leases(self) -> int:
         cur = self.db.execute("UPDATE crawl_queue SET status='queued', worker_id=NULL, locked_until=NULL WHERE status='processing' AND locked_until IS NOT NULL AND locked_until < ?", (utcnow(),))
         return cur.rowcount
+
+    def queued_count(self) -> int:
+        row = self.db.fetchone("SELECT COUNT(*) AS c FROM crawl_queue WHERE status='queued'")
+        return int(row["c"]) if row else 0
 
     def acquire(self, worker_id: str, lease_seconds: int = 300):
         until = (datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)).isoformat()
@@ -146,9 +151,13 @@ class Crawler:
 
     def run(self, max_jobs: int | None = None) -> int:
         self.release_expired_leases()
+        queued = self.queued_count()
+        total = queued if max_jobs is None else min(queued, max_jobs)
         done = 0
-        while max_jobs is None or done < max_jobs:
-            if not self.process_one():
-                break
-            done += 1
+        with progress(total=total or None, desc="crawl", unit="page") as bar:
+            while max_jobs is None or done < max_jobs:
+                if not self.process_one():
+                    break
+                done += 1
+                bar.update(1)
         return done
