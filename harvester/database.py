@@ -112,6 +112,18 @@ CREATE TABLE IF NOT EXISTS robots_cache (
     fetched_at TEXT,
     status INTEGER
 );
+CREATE TABLE IF NOT EXISTS proxies (
+    id INTEGER PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    host_port TEXT,
+    source TEXT,
+    status TEXT DEFAULT 'fresh',
+    fail_count INTEGER DEFAULT 0,
+    first_seen TEXT,
+    last_seen TEXT,
+    last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proxies_status ON proxies(status);
 """
 
 _SEARCH_COLS = {
@@ -201,4 +213,6 @@ class Database:
             "dl_active": n("documents", "download_status='downloading'"),
             "dl_done": n("documents", "download_status='complete'"),
             "dl_failed": n("documents", "download_status='failed'"),
+            "proxies_live": n("proxies", "status IN ('fresh','ok')"),
+            "proxies_dead": n("proxies", "status='dead'"),
         }

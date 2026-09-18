@@ -30,21 +30,17 @@ rate_limit:
 
 network:
   rotate_headers: true
+  rotate_proxies: true
+  proxy: null
+  proxy_lists:
+    - "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt"
+    - "https://raw.githubusercontent.com/hookzof/socks5_list/master/proxy.txt"
   user_agent: "GovernmentPDFHarvester/1.0 (+https://github.com/jedisecX/Jedi-Gov-Harvester)"
   user_agents:
     - "GovernmentPDFHarvester/1.0 (+https://github.com/jedisecX/Jedi-Gov-Harvester)"
     - "GovernmentPDFHarvester/1.0 (research; +https://github.com/jedisecX/Jedi-Gov-Harvester)"
     - "Mozilla/5.0 (compatible; GovernmentPDFHarvester/1.0; +https://github.com/jedisecX/Jedi-Gov-Harvester)"
-    - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 GovernmentPDFHarvester/1.0"
-    - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 GovernmentPDFHarvester/1.0"
   timeout: 30
-  # Optional. socks5h resolves DNS through the proxy. Examples:
-  # proxy: "socks5h://127.0.0.1:9050"
-  # proxy:
-  #   scheme: socks5h
-  #   host: 127.0.0.1
-  #   port: 9050
-  proxy: null
 
 allowed_domains:
   - "*.gov"

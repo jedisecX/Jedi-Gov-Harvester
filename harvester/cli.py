@@ -14,6 +14,7 @@ from harvester.export.json import export_json, export_jsonl
 from harvester.http_client import build_session
 from harvester.logging_setup import setup_logging
 from harvester.monitoring.dashboard import render_status
+from harvester.proxy_pool import ProxyPool
 from harvester.rate_limit import DomainLimiter
 from harvester.search import get_provider
 
@@ -27,13 +28,23 @@ def _policy(cfg, db):
     extras = [r["domain"] for r in db.fetchall("SELECT DISTINCT domain FROM agencies")]
     return DomainPolicy(cfg.allowed_domains, cfg.denied_domains, extras)
 
-def _session(cfg):
+def _session(cfg, db=None):
     agents = cfg.get("network.user_agents") or []
+    pool = None
+    lists = cfg.get("network.proxy_lists") or []
+    rotate = bool(cfg.get("network.rotate_proxies", False))
+    if db is not None and (lists or rotate):
+        pool = ProxyPool(db, list(lists) if lists else None)
+        if lists or rotate:
+            pool.refresh()
+        if pool.live_count() == 0:
+            pool = None
     return build_session(
         cfg.user_agent,
         rotate=bool(cfg.get("network.rotate_headers", True)),
         user_agents=list(agents) if agents else None,
         proxy=cfg.get("network.proxy") or cfg.get("network.socks"),
+        pool=pool,
     )
 
 def _limiter(cfg):
@@ -65,13 +76,21 @@ def seed(ctx, seed_file):
     click.echo(f"seeded {n} agencies from {path}")
 
 @main.command()
+@click.pass_context
+def proxies(ctx):
+    cfg, db = _boot(ctx)
+    pool = ProxyPool(db, list(cfg.get("network.proxy_lists") or []))
+    added = pool.refresh()
+    click.echo(f"proxies added={added} live={pool.live_count()}")
+
+@main.command()
 @click.option("--state", default=None)
 @click.option("--agency", default=None)
 @click.option("--max-pages", type=int, default=None)
 @click.pass_context
 def discover(ctx, state, agency, max_pages):
     cfg, db = _boot(ctx)
-    session = _session(cfg)
+    session = _session(cfg, db)
     provider = _search_provider(cfg, session)
     disc = Discovery(db, provider, _policy(cfg, db), pages_per_query=int(cfg.get("search.pages_per_query", 10)))
     click.echo(f"planned {disc.plan(state=state, agency=agency)} search pages")
@@ -84,7 +103,7 @@ def discover(ctx, state, agency, max_pages):
 @click.pass_context
 def crawl(ctx, state, agency, max_jobs):
     cfg, db = _boot(ctx)
-    crawler = Crawler(db, _session(cfg), _policy(cfg, db), _limiter(cfg), max_depth=int(cfg.get("crawler.max_depth", 5)), max_pages_per_domain=int(cfg.get("crawler.max_pages_per_domain", 10000)), max_pdf_per_domain=int(cfg.get("crawler.max_pdf_count_per_domain", 100000)), timeout=int(cfg.get("network.timeout", 30)), user_agent=cfg.user_agent)
+    crawler = Crawler(db, _session(cfg, db), _policy(cfg, db), _limiter(cfg), max_depth=int(cfg.get("crawler.max_depth", 5)), max_pages_per_domain=int(cfg.get("crawler.max_pages_per_domain", 10000)), max_pdf_per_domain=int(cfg.get("crawler.max_pdf_count_per_domain", 100000)), timeout=int(cfg.get("network.timeout", 30)), user_agent=cfg.user_agent)
     click.echo(f"enqueued {crawler.seed_from_agencies(state=state, agency=agency)} agency URLs")
     click.echo(f"crawled {crawler.run(max_jobs=max_jobs)} pages")
 
@@ -111,7 +130,7 @@ def export(ctx, fmt, output):
 def download(ctx, workers):
     cfg, db = _boot(ctx)
     n = workers if workers is not None else int(cfg.get("download.workers", 16))
-    mgr = DownloadManager(db, _session(cfg), _limiter(cfg), cfg.storage_root, cfg.storage_temp, workers=n, timeout=int(cfg.get("download.timeout", 60)), retries=int(cfg.get("download.retries", 5)), chunk_size=int(cfg.get("download.chunk_size", 1048576)), layout=str(cfg.get("storage.layout", "content_addressed")))
+    mgr = DownloadManager(db, _session(cfg, db), _limiter(cfg), cfg.storage_root, cfg.storage_temp, workers=n, timeout=int(cfg.get("download.timeout", 60)), retries=int(cfg.get("download.retries", 5)), chunk_size=int(cfg.get("download.chunk_size", 1048576)), layout=str(cfg.get("storage.layout", "content_addressed")))
     click.echo(f"download workers={n}")
     mgr.run()
 
@@ -119,7 +138,7 @@ def download(ctx, workers):
 @click.pass_context
 def resume(ctx):
     cfg, db = _boot(ctx)
-    session = _session(cfg)
+    session = _session(cfg, db)
     policy = _policy(cfg, db)
     limiter = _limiter(cfg)
     crawler = Crawler(db, session, policy, limiter, user_agent=cfg.user_agent)
