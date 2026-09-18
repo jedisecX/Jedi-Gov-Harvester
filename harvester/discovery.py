@@ -15,6 +15,11 @@ from harvester.search.scheduler import SearchScheduler
 log = logging.getLogger("search")
 
 
+def _label(query: str, width: int = 42) -> str:
+    text = (query or "").replace("\n", " ")
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
 class Discovery:
     def __init__(self, db: Database, provider: SearchProvider, policy: DomainPolicy, *, pages_per_query: int = 10):
         self.db = db
@@ -67,21 +72,30 @@ class Discovery:
         return True
 
     def run(self, max_pages: int | None = None) -> int:
-        remaining = self.pending_count()
-        total = remaining if max_pages is None else min(remaining, max_pages)
+        queries = self.scheduler.pending_queries()
         done = 0
-        idle = 0
-        with progress(total=total or None, desc="discover", unit="page") as bar:
-            while max_pages is None or done < max_pages:
-                results = self.scheduler.fetch_one_page()
-                if results is None:
-                    idle += 1
-                    if not self.scheduler.due_row() or idle > 3:
-                        break
-                    continue
-                ingested = self.ingest(results)
-                done += 1
+        with progress(total=len(queries) or None, desc="queries", unit="query") as qbar:
+            for query in queries:
+                pages = self.scheduler.pending_pages(query)
                 idle = 0
-                bar.update(1)
-                bar.set_postfix(urls=ingested)
+                with progress(total=pages or None, desc=_label(query), unit="page", leave=False) as pbar:
+                    while pages > 0 and (max_pages is None or done < max_pages):
+                        results = self.scheduler.fetch_one_page(query)
+                        if results is None:
+                            idle += 1
+                            if not self.scheduler.due_row(query) or idle > 3:
+                                break
+                            continue
+                        ingested = self.ingest(results)
+                        done += 1
+                        pages -= 1
+                        idle = 0
+                        pbar.update(1)
+                        pbar.set_postfix(urls=ingested)
+                        qbar.set_postfix(last=_label(query, 24))
+                        if max_pages is not None and done >= max_pages:
+                            break
+                qbar.update(1)
+                if max_pages is not None and done >= max_pages:
+                    break
         return done

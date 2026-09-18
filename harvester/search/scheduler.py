@@ -24,16 +24,43 @@ class SearchScheduler:
         self.db = db
         self.provider = provider
 
-    def due_row(self):
+    def pending_queries(self) -> list[str]:
+        rows = self.db.fetchall(
+            """SELECT DISTINCT query FROM searches
+               WHERE provider=? AND status IN ('pending','backoff')
+               ORDER BY query""",
+            (self.provider.name,),
+        )
+        return [r["query"] for r in rows]
+
+    def pending_pages(self, query: str) -> int:
+        row = self.db.fetchone(
+            """SELECT COUNT(*) AS c FROM searches
+               WHERE provider=? AND query=? AND status IN ('pending','backoff')""",
+            (self.provider.name, query),
+        )
+        return int(row["c"]) if row else 0
+
+    def due_row(self, query: str | None = None):
         now = _iso(_now())
+        if query is None:
+            return self.db.fetchone(
+                """SELECT * FROM searches
+                   WHERE provider=?
+                     AND status IN ('pending','backoff')
+                     AND (next_attempt IS NULL OR next_attempt<=?)
+                   ORDER BY query, page
+                   LIMIT 1""",
+                (self.provider.name, now),
+            )
         return self.db.fetchone(
             """SELECT * FROM searches
-               WHERE provider=?
+               WHERE provider=? AND query=?
                  AND status IN ('pending','backoff')
                  AND (next_attempt IS NULL OR next_attempt<=?)
-               ORDER BY query, page
+               ORDER BY page
                LIMIT 1""",
-            (self.provider.name, now),
+            (self.provider.name, query, now),
         )
 
     def cached_results(self, query: str, page: int) -> list[SearchResult] | None:
@@ -76,8 +103,8 @@ class SearchScheduler:
                 (nxt, self.provider.name),
             )
 
-    def fetch_one_page(self) -> list[SearchResult] | None:
-        row = self.due_row()
+    def fetch_one_page(self, query: str | None = None) -> list[SearchResult] | None:
+        row = self.due_row(query)
         if not row:
             return None
         cached = self.cached_results(row["query"], int(row["page"]))

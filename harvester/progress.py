@@ -24,6 +24,9 @@ class _NullBar:
     def set_postfix(self, **kwargs) -> None:
         return None
 
+    def set_description(self, desc: str, refresh: bool = True) -> None:
+        self.desc = desc
+
     def close(self) -> None:
         return None
 
@@ -35,8 +38,8 @@ class _NullBar:
 
 
 @contextmanager
-def progress(total=None, desc: str = "", unit: str = "it", disable: bool = False) -> Iterator:
-    bar = _NullBar(total=total, desc=desc) if disable else _tqdm(total=total, desc=desc, unit=unit)
+def progress(total=None, desc: str = "", unit: str = "it", disable: bool = False, leave: bool = True) -> Iterator:
+    bar = _NullBar(total=total, desc=desc) if disable else _tqdm(total=total, desc=desc, unit=unit, leave=leave)
     try:
         yield bar
     finally:
