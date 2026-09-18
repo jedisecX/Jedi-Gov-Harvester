@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import logging
+
 from harvester.agencies import list_agencies, search_queries_for
 from harvester.crawler.canonicalize import normalize_url
-from harvester.database import Database, utcnow
+from harvester.database import Database
 from harvester.domain_policy import DomainPolicy
 from harvester.pdf.detector import url_looks_like_pdf
 from harvester.pdf.indexer import PdfIndexer
-from harvester.rate_limit import backoff_seconds
 from harvester.search.base import SearchProvider
+from harvester.search.scheduler import SearchScheduler
 
 log = logging.getLogger("search")
 
@@ -20,6 +21,7 @@ class Discovery:
         self.policy = policy
         self.pages_per_query = pages_per_query
         self.indexer = PdfIndexer(db)
+        self.scheduler = SearchScheduler(db, provider)
 
     def plan(self, state: str | None = None, agency: str | None = None) -> int:
         created = 0
@@ -33,29 +35,14 @@ class Discovery:
                     created += cur.rowcount
         return created
 
-    def next_page(self):
-        return self.db.fetchone(
-            """SELECT * FROM searches WHERE status IN ('pending', 'running') ORDER BY query, page LIMIT 1"""
-        )
-
-    def run_one(self) -> bool:
-        row = self.next_page()
-        if not row:
-            return False
-        self.db.execute(
-            "UPDATE searches SET status='running', started_at=COALESCE(started_at, ?) WHERE id=?",
-            (utcnow(), row["id"]),
-        )
-        try:
-            results = self.provider.search(row["query"], int(row["page"]))
-        except Exception as exc:
-            log.info("search failed %s page %s: %s", row["query"], row["page"], exc)
-            self.db.execute("UPDATE searches SET status='pending' WHERE id=?", (row["id"],))
-            raise
+    def ingest(self, results) -> int:
         count = 0
-        for item in results:
+        for item in results or []:
             url = normalize_url(item.url)
             if not url or not self.policy.is_allowed(url):
+                continue
+            exists = self.db.fetchone("SELECT 1 FROM urls WHERE canonical_url=?", (url,))
+            if exists:
                 continue
             if url_looks_like_pdf(url):
                 self.indexer.record(url, source_url=f"search:{self.provider.name}")
@@ -64,17 +51,30 @@ class Discovery:
                     """INSERT OR IGNORE INTO crawl_queue (url, depth, priority, status) VALUES (?, 0, 5, 'queued')""",
                     (url,),
                 )
+                self.indexer.record(url, source_url=f"search:{self.provider.name}") if False else None
             count += 1
-        self.db.execute(
-            """UPDATE searches SET status='completed', completed_at=?, result_count=? WHERE id=?""",
-            (utcnow(), count, row["id"]),
-        )
+        return count
+
+    def run_one(self) -> bool:
+        results = self.scheduler.fetch_one_page()
+        if results is None:
+            return bool(self.scheduler.due_row()) is False and False or results is not None
+        self.ingest(results)
         return True
 
     def run(self, max_pages: int | None = None) -> int:
         done = 0
+        idle = 0
         while max_pages is None or done < max_pages:
-            if not self.run_one():
-                break
+            results = self.scheduler.fetch_one_page()
+            if results is None:
+                idle += 1
+                if not self.scheduler.due_row():
+                    break
+                if idle > 3:
+                    break
+                continue
+            self.ingest(results)
             done += 1
+            idle = 0
         return done

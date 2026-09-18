@@ -15,7 +15,7 @@ from harvester.http_client import build_session
 from harvester.logging_setup import setup_logging
 from harvester.monitoring.dashboard import render_status
 from harvester.rate_limit import DomainLimiter
-from harvester.search.yahoo import YahooSearchProvider
+from harvester.search import get_provider
 
 def _boot(ctx):
     setup_logging()
@@ -32,6 +32,14 @@ def _session(cfg):
 
 def _limiter(cfg):
     return DomainLimiter(rps=float(cfg.get("rate_limit.requests_per_second", 2)), concurrent=int(cfg.get("rate_limit.concurrent_per_domain", 2)))
+
+def _search_provider(cfg, session):
+    return get_provider(
+        str(cfg.get("search.provider", "yahoo")),
+        session,
+        delay=float(cfg.get("search.delay_seconds", 2)),
+        timeout=int(cfg.get("network.timeout", 30)),
+    )
 
 @click.group()
 @click.option("--config", default="config.yaml", show_default=True)
@@ -58,7 +66,7 @@ def seed(ctx, seed_file):
 def discover(ctx, state, agency, max_pages):
     cfg, db = _boot(ctx)
     session = _session(cfg)
-    provider = YahooSearchProvider(session, delay=float(cfg.get("search.delay_seconds", 2)), timeout=int(cfg.get("network.timeout", 30)))
+    provider = _search_provider(cfg, session)
     disc = Discovery(db, provider, _policy(cfg, db), pages_per_query=int(cfg.get("search.pages_per_query", 10)))
     click.echo(f"planned {disc.plan(state=state, agency=agency)} search pages")
     click.echo(f"processed {disc.run(max_pages=max_pages)} search pages")
@@ -112,7 +120,7 @@ def resume(ctx):
     from harvester.downloader.worker import DownloadWorker
     dw = DownloadWorker(db, session, limiter, cfg.storage_root, cfg.storage_temp)
     click.echo(f"released crawl={crawler.release_expired_leases()} download={dw.release_expired()}")
-    disc = Discovery(db, YahooSearchProvider(session, delay=float(cfg.get("search.delay_seconds", 2))), policy, pages_per_query=int(cfg.get("search.pages_per_query", 10)))
+    disc = Discovery(db, _search_provider(cfg, session), policy, pages_per_query=int(cfg.get("search.pages_per_query", 10)))
     click.echo(f"resumed searches={disc.run()} crawl={crawler.run()}; start download separately if needed")
 
 @main.command()

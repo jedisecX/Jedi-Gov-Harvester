@@ -67,8 +67,24 @@ CREATE TABLE IF NOT EXISTS searches (
     started_at TEXT,
     completed_at TEXT,
     result_count INTEGER DEFAULT 0,
+    attempts INTEGER DEFAULT 0,
+    error TEXT,
+    next_attempt TEXT,
     UNIQUE(provider, query, page)
 );
+CREATE TABLE IF NOT EXISTS search_results (
+    id INTEGER PRIMARY KEY,
+    search_id INTEGER,
+    provider TEXT NOT NULL,
+    query TEXT NOT NULL,
+    page INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    snippet TEXT,
+    seen_at TEXT,
+    UNIQUE(provider, query, page, url)
+);
+CREATE INDEX IF NOT EXISTS idx_search_results_url ON search_results(url);
 CREATE TABLE IF NOT EXISTS crawl_queue (
     id INTEGER PRIMARY KEY,
     url TEXT NOT NULL UNIQUE,
@@ -98,8 +114,16 @@ CREATE TABLE IF NOT EXISTS robots_cache (
 );
 """
 
+_SEARCH_COLS = {
+    "attempts": "INTEGER DEFAULT 0",
+    "error": "TEXT",
+    "next_attempt": "TEXT",
+}
+
+
 def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
 
 class Database:
     def __init__(self, path: str | Path):
@@ -123,6 +147,10 @@ class Database:
         conn = sqlite3.connect(self.path)
         try:
             conn.executescript(SCHEMA)
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(searches)").fetchall()}
+            for col, decl in _SEARCH_COLS.items():
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE searches ADD COLUMN {col} {decl}")
             conn.commit()
         finally:
             conn.close()
@@ -160,7 +188,9 @@ class Database:
             "urls": n("urls"),
             "searches": n("searches"),
             "searches_done": n("searches", "status='completed'"),
-            "searches_pending": n("searches", "status IN ('pending','running')"),
+            "searches_pending": n("searches", "status IN ('pending','running','backoff')"),
+            "searches_blocked": n("searches", "status='blocked'"),
+            "search_results": n("search_results"),
             "crawl_queued": n("crawl_queue", "status='queued'"),
             "crawl_processing": n("crawl_queue", "status='processing'"),
             "crawl_done": n("crawl_queue", "status='completed'"),

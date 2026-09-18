@@ -7,10 +7,40 @@ SQLite is the source of truth. The filesystem stores downloaded PDFs. CSV/JSON a
 ## Pipeline
 
 ```
-GOVERNMENT SEEDS → SEARCH/DISCOVERY → URL INDEX → DOMAIN FILTER
-      → CRAWLER → PDF INDEX → CSV EXPORT → DOWNLOAD QUEUE
-      → MULTITHREADED FETCH → RESUME + VERIFY → NO-CLOBBER → LOCAL ARCHIVE
+                 ┌──────────────────┐
+                 │  Search Scheduler │
+                 └────────┬─────────┘
+                          │
+                    one page/request
+                          │
+                 ┌────────▼─────────┐
+                 │ Search Provider    │  (yahoo, replaceable)
+                 └────────┬─────────┘
+                          │
+                 ┌────────▼─────────┐
+                 │ Result Normalizer │
+                 └────────┬─────────┘
+                          │
+              ┌──────────▼───────────┐
+              │ Persistent Search DB  │
+              └──────────┬───────────┘
+                          │
+                 ┌────────▼─────────┐
+                 │ Government URL     │
+                 │ PDF Discovery      │
+                 └────────────────────┘
 ```
+
+Search does **not** try to evade Yahoo anti-bot. It:
+
+- requests exactly one results page
+- persists query/page state in SQLite
+- caches seen results
+- honors 429 / 403 / 503 and `Retry-After`
+- exponential backoff, then stops (`blocked`) if Yahoo refuses automated access
+- is provider-replaceable via `search.provider` in `config.yaml`
+
+If page 1 succeeds and page 2 rate-limits, page 1 stays `completed` and page 2 waits.
 
 ## Install
 
@@ -33,33 +63,23 @@ python harvester.py status
 python harvester.py verify
 ```
 
-Discovery uses Yahoo one results page at a time and stores page state so a crash on page 7 resumes on page 7.
-
 Downloads write `*.part` files, send HTTP Range requests when possible, hash with SHA-256, and never overwrite a different existing file.
 
 ## Seeds
 
-`seeds/agencies.json` covers all 50 states: official portals, governors, secretaries of state, legislatures, plus a set of documented agency homepages.
-
-Rebuild:
-
-```bash
-python seeds/build_seeds.py
-```
+`seeds/agencies.json` covers all 50 states: official portals, governors, secretaries of state, legislatures, plus documented agency homepages.
 
 Do not invent agency URLs. Add verified official URLs only.
 
 ## Config
 
-See `config.yaml` for domain allow/deny lists, crawl limits, rate limits, and storage layout (`content_addressed` or `flat`).
+See `config.yaml`.
 
 ## Tests
 
 ```bash
 pytest -q
 ```
-
-Integration tests use a local HTTP server. They do not hit live government sites.
 
 ## Respect
 
